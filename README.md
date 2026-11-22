@@ -5,7 +5,7 @@ Protótipo de aplicativo de edição de imagens e vídeo em **Python + OpenCV**,
 **Processamento de Imagens**: filtros, operações aritméticas entre imagens, seleção de canais
 e *stickers*. A interação é feita por **HighGUI (janela do OpenCV) + teclado + console**.
 
-![Editor com filtro, stickers e a descrição do efeito no painel inferior](docs/screenshot.jpg)
+![Editor com carrossel de filtros, sliders, paleta de stickers e legenda de atalhos](docs/screenshot.jpg)
 
 > **Autores:**
 > Arthur Rambor
@@ -67,8 +67,21 @@ Outras opções: `python main.py` (editor vazio), `python main.py --camera 1` (o
 | `z` | Desfazer a última ação (filtro ou sticker) |
 | `s` | **Salvar** a imagem / o quadro atual em `output/` |
 | `r` | **Resetar**: remove filtros e stickers, volta à imagem original |
-| `h` | Mostrar a ajuda no console |
+| `h` | Mostrar / ocultar a **legenda de atalhos** (painel à direita da janela) |
 | `ESC` ou `q` | Sair |
+
+### Interface na janela (mouse)
+
+Tudo que os atalhos fazem também pode ser feito com o mouse, na própria janela:
+
+| Região | O que faz |
+|---|---|
+| **Barra de botões** | Carregar, 2ª imagem, Webcam, Aplicar, Desfazer, Resetar, Salvar, Canal, Encadear, Gato (rosto) e Atalhos: repetem as teclas `l i v a z r s m c f h` |
+| **Carrossel de filtros** | Miniaturas do efeito aplicado **à sua imagem** (com o canal e os parâmetros atuais). Clique escolhe; **duplo clique aplica**; `<` e `>` rolam a lista. Bolinha verde = efeito já aplicado; `A+B` = operação com duas imagens |
+| **Sliders** | Um por parâmetro do efeito: clique ou **arraste** (o valor respeita o passo e os limites). Clicar no nome escolhe o parâmetro para `+`/`-` |
+| **Paleta de stickers** | Clique no sticker, depois **clique na foto** para posicioná-lo; `nenhum`, `-` e `+` (tamanho) |
+| **Barra de mensagem** | Último aviso do editor (arquivo salvo, erro, etc.) |
+| **Legenda (`h`)** | Lista de atalhos sempre à vista |
 
 Fluxo típico: `l` → `n` até o filtro desejado (leia a descrição) → `p`, `+`/`-` para ajustar →
 `m` para escolher o canal → `a` para aplicar → `s` para salvar.
@@ -83,14 +96,14 @@ Fluxo típico: `l` → `n` até o filtro desejado (leia a descrição) → `p`, 
 | Filtro de suavização / de realce | Atendido | Box, Gaussian, Median, Bilateral / Sharpen, Laplaciano, Unsharp Mask |
 | Seleção de canal (RGB, Gray, R, G, B; um canal exibe o resultado daquele canal) | Atendido | `apply_effect` (`filters.py`), tecla `m` |
 | Pelo menos 3 operações com duas imagens | Atendido: **6** | `op_add`, `op_subtract`, `op_blend`, `op_multiply`, `op_absdiff`, `op_lighten` |
-| Descrição do filtro antes de aplicar | Atendido | `Editor.describe` (console) e painel da janela (`Editor.render`) |
+| Descrição do filtro antes de aplicar | Atendido | `Editor.describe` (console), painel da janela e carrossel (`Editor.render`, `ui.py`) |
 | Pelo menos 5 stickers com canal alfa | Atendido: **7** | `assets/stickers/`, `overlay_rgba` em `stickers.py` |
 | Posicionar sticker com o clique do mouse (modo foto) | Atendido | `Editor.on_mouse` |
 | Salvar e resetar | Atendido | `Editor.save` (tecla `s`) e `Editor.reset` (tecla `r`) |
 | Extra: combinação de filtros | Atendido | encadeamento, tecla `c` |
 | Extra: sticker animado por spritesheet | Atendido | `7_brilho_f6.png` (6 quadros), `stickers.py` |
 | Extra: filtro com detecção de face (Haar) | Atendido | tecla `f`, `Editor._detect_faces` / `draw_cat_face` |
-| Extra: interface gráfica com biblioteca externa | Não implementado | a interface usa HighGUI + console |
+| Extra: interface gráfica com biblioteca externa | Não implementado | a interface é desenhada na janela do OpenCV (HighGUI): botões, carrossel, sliders e paleta em `ui.py`; o seletor de arquivos usa Tkinter (Windows) |
 
 ## Efeitos
 
@@ -159,6 +172,7 @@ desenhados proceduralmente com OpenCV (sem direitos autorais).
 ```
 main.py              # ponto de entrada e laço da janela (HighGUI)
 editor.py            # estado do editor, pipeline, teclas, mouse, HUD, webcam, rosto
+ui.py                # interface na janela: botões, carrossel de miniaturas, sliders, stickers, legenda
 filters.py           # filtros, operações aritméticas, descrições e seleção de canal
 stickers.py          # carregamento de stickers (alfa), spritesheet e overlay
 imageio_utils.py     # leitura/gravação de imagens e redimensionamento
@@ -178,7 +192,8 @@ python -m unittest discover -s tests -v
 
 Cobrem todos os efeitos em todos os canais, valores das operações aritméticas, overlay com alfa
 e recorte, animação do spritesheet, carregamento do classificador de rosto (inclusive em caminhos
-com acentos), pipeline (aplicar, encadear, desfazer, resetar), painel com a descrição do efeito,
+com acentos), pipeline (aplicar, encadear, desfazer, resetar), painel com a descrição do efeito, interface
+(cliques em botões, carrossel, sliders arrastáveis, paleta de stickers e miniaturas),
 salvamento com caminho acentuado, tratamento de erros (arquivo inexistente, webcam indisponível) e
 o laço principal com janela e webcam simuladas. Os mesmos testes rodam no GitHub Actions.
 

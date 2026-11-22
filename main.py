@@ -44,6 +44,8 @@ def run(args: argparse.Namespace) -> int:
             key = cv2.waitKey(1 if editor.mode == "video" else 30) & 0xFF
             if not editor.handle_key(key):
                 break
+            if not editor.process_queue():  # botões que abrem diálogo (Carregar, 2a imagem)
+                break
             if frames > 5 and cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
                 break  # janela fechada pelo "X"
     except KeyboardInterrupt:

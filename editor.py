@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 import cv2
 import numpy as np
 
+import ui
 from filters import CHANNELS, EFFECTS, Effect, apply_effect
 from imageio_utils import limit_size, read_image, write_image
 from stickers import (PlacedSticker, Sticker, draw_sticker, load_stickers, overlay_rgba,
@@ -22,11 +23,11 @@ ROOT = Path(__file__).resolve().parent
 ASSETS = ROOT / "assets"
 OUTPUT = ROOT / "output"
 
-PHOTO_MAX = (1000, 700)   # tamanho máximo de trabalho no modo foto
+PHOTO_MAX = (1000, 560)   # tamanho máximo de trabalho no modo foto
 VIDEO_MAX = (640, 480)    # tamanho máximo de trabalho no modo vídeo
 WINDOW = "Editor de Imagens e Video - Grau B"
-MIN_CANVAS_W = 780
-HUD_BASE_H = 78          # linhas de estado (modo, canal, parâmetros, stickers)
+MIN_CANVAS_W = 860         # largura mínima: cabe toda a barra de botões
+HUD_BASE_H = 56          # linhas de estado (modo/canal/encadeamento, stickers/rosto)
 HUD_DESC_LINES = 3       # linhas reservadas para a descrição do efeito selecionado
 HUD_DESC_WIDTH = 88      # caracteres por linha da descrição
 HUD_H = HUD_BASE_H + 18 * HUD_DESC_LINES
@@ -35,7 +36,7 @@ CASCADE_FILE = "haarcascade_frontalface_default.xml"
 
 HELP = """
 =========================== COMANDOS ===========================
- l  carregar foto (digite o caminho no console)
+ l  carregar foto (seletor de arquivos no Windows)
  i  carregar a 2ª imagem usada nas operações aritméticas
  v  iniciar/parar a webcam
  n / b   próximo / anterior efeito      t  listar todos os efeitos
@@ -49,7 +50,9 @@ HELP = """
  f       filtro de gatinho por detecção de rosto (foto e vídeo)
  s       salvar imagem/quadro atual em output/
  r       resetar (limpa filtros, stickers e volta à imagem original)
- h       ajuda            ESC ou q   sair
+ h       mostrar/ocultar a legenda de atalhos      ESC ou q   sair
+ MOUSE   clique na miniatura = escolhe o efeito (duplo clique aplica); arraste os
+         sliders; botões da barra repetem os atalhos; sticker + clique na foto
 ================================================================
 """
 
@@ -104,6 +107,17 @@ class Editor:
         self._t0 = time.time()
         self.last_output: Optional[np.ndarray] = None
         self.message = ""
+
+        # interface na janela (ver ui.py)
+        self.show_legend = True
+        self.pending_keys: List[int] = []      # ações de botões que abrem diálogo (l, i)
+        self._hits: List[tuple] = []
+        self._drag = None                      # (índice do parâmetro, x0, x1) durante o arraste
+        self._thumb_cache: Dict[tuple, np.ndarray] = {}
+        self._thumb_token = None
+        self._thumb_base: Optional[np.ndarray] = None
+        self._thumb_snapshot: Optional[np.ndarray] = None
+        self._sticker_icons: Dict[int, np.ndarray] = {}
 
     # ------------------------------------------------------------------ util
     @staticmethod
@@ -208,6 +222,7 @@ class Editor:
             return
         self.cap = cap
         self._img2_cache = None
+        self._thumb_snapshot = None
         self._frame_count = 0
         self._faces_video = []
         self.say("Webcam iniciada (imagem espelhada).")
@@ -217,6 +232,7 @@ class Editor:
             self.cap.release()
             self.cap = None
             self._img2_cache = None
+            self._thumb_snapshot = None
             self._dirty = True
 
     def _read_frame(self) -> Optional[np.ndarray]:
@@ -297,6 +313,12 @@ class Editor:
         self.param_idx = 0
         self.describe()
 
+    def select_index(self, idx: int) -> None:
+        if 0 <= idx < len(self.effects) and idx != self.effect_idx:
+            self.effect_idx = idx
+            self.param_idx = 0
+            self.describe()
+
     def list_effects(self) -> None:
         print("\nEfeitos disponíveis:")
         for i, e in enumerate(self.effects):
@@ -333,7 +355,67 @@ class Editor:
             self.say("Não existe sticker %d (há %d)." % (idx + 1, len(self.stickers)))
 
     # -------------------------------------------------------------- mouse
+    def _hit_at(self, x: int, y: int):
+        for hit in self._hits:
+            if hit[0] <= x < hit[2] and hit[1] <= y < hit[3]:
+                return hit
+        return None
+
+    def _set_slider(self, idx: int, x0: int, x1: int, x: float) -> None:
+        params = self.effect.params
+        if 0 <= idx < len(params):
+            self.param_idx = idx
+            p = params[idx]
+            self.params[p.name] = ui.slider_value(p, x, x0, x1)
+
+    def _activate(self, hit, x: int, double: bool = False) -> None:
+        """Reage ao clique numa área da interface (botão, miniatura, slider, sticker)."""
+        kind, arg, extra = hit[4], hit[5], hit[6]
+        if kind == "key":
+            if arg in (ord("l"), ord("i")):  # abrem diálogo: tratados no laço principal
+                self.pending_keys.append(arg)
+            else:
+                self.handle_key(arg)
+        elif kind == "effect":
+            self.select_index(arg)
+            if double:
+                self.apply_current()
+        elif kind == "page":
+            self.select_index(max(0, min(len(self.effects) - 1, self.effect_idx + arg)))
+        elif kind == "param":
+            if arg < len(self.effect.params):
+                self.param_idx = arg
+        elif kind == "slider":
+            self._drag = (arg, extra[0], extra[1])
+            self._set_slider(arg, extra[0], extra[1], x)
+        elif kind == "sticker":
+            self.select_sticker(arg)
+        elif kind == "sticker_none":
+            self.select_sticker(None)
+        elif kind == "sticker_size":
+            self.handle_key(ord("." if arg > 0 else ","))
+
+    def process_queue(self) -> bool:
+        """Executa as ações de botões que dependem de diálogo. False = encerrar."""
+        while self.pending_keys:
+            if not self.handle_key(self.pending_keys.pop(0)):
+                return False
+        return True
+
     def on_mouse(self, event, x, y, flags=0, param=None) -> None:
+        if event == cv2.EVENT_LBUTTONUP:
+            self._drag = None
+            return
+        if event == cv2.EVENT_MOUSEMOVE:
+            if self._drag is not None and (flags & cv2.EVENT_FLAG_LBUTTON):
+                self._set_slider(self._drag[0], self._drag[1], self._drag[2], x)
+            return
+        if event not in (cv2.EVENT_LBUTTONDOWN, cv2.EVENT_LBUTTONDBLCLK):
+            return
+        hit = self._hit_at(x, y)
+        if hit is not None:
+            self._activate(hit, x, double=event == cv2.EVENT_LBUTTONDBLCLK)
+            return
         if event != cv2.EVENT_LBUTTONDOWN:
             return
         if self.mode != "photo":
@@ -341,7 +423,8 @@ class Editor:
                 self.say("Stickers por clique funcionam no modo foto (pare a webcam com 'v').")
             return
         if self.sticker_sel is None:
-            self.say("Escolha um sticker (teclas 1-%d) antes de clicar." % max(1, len(self.stickers)))
+            self.say("Escolha um sticker (teclas 1-%d ou paleta) antes de clicar na foto." %
+                     max(1, len(self.stickers)))
             return
         h, w = self.original.shape[:2]
         if not (0 <= x < w and 0 <= y < h):
@@ -434,6 +517,8 @@ class Editor:
             frame = self._read_frame()
             if frame is None:
                 return self.compose()
+            if self._thumb_snapshot is None:  # base das miniaturas do carrossel
+                self._thumb_snapshot = frame.copy()
             out = self._run_steps(frame).copy()
             if self.face_on and self._load_face_assets():
                 if self._frame_count % 3 == 0:
@@ -465,22 +550,22 @@ class Editor:
         return blank
 
     def render(self) -> np.ndarray:
-        """Imagem composta + painel HUD (o painel fica abaixo, sem cobrir a imagem)."""
+        """Janela completa: imagem (canto superior esquerdo, sem nada por cima), painel de estado,
+        barra de botões, carrossel, sliders, stickers, mensagem e, à direita, a legenda."""
         img = self.compose()
         h, w = img.shape[:2]
         cw = max(w, MIN_CANVAS_W)
-        canvas = np.full((h + HUD_H, cw, 3), 28, np.uint8)
+        total_w = cw + (ui.LEGEND_W if self.show_legend else 0)
+        canvas = np.full((h + HUD_H + ui.CHROME_H, total_w, 3), 28, np.uint8)
         canvas[:h, :w] = img
         e = self.effect
-        ps = "  ".join(("*" if i == self.param_idx else "") + "%s=%s" % (p.name, self.params[p.name])
-                        for i, p in enumerate(e.params)) or "(sem parametros)"
         sel = self.stickers[self.sticker_sel].name if self.sticker_sel is not None else "-"
         lines = [
             "[%s] %s | canal: %s | encadear: %s | passos: %d" % (
                 self.mode.upper(), e.name, self.channel, "SIM" if self.chain else "nao", len(self.steps)),
-            "params: %s" % ps,
-            "stickers: %d | sel: %s (%.0f%%) | rosto: %s | h = ajuda" % (
-                len(self.placed), sel, self.sticker_scale * 100, "ON" if self.face_on else "off"),
+            "stickers: %d | sel: %s (%.0f%%) | rosto: %s | efeito %d/%d" % (
+                len(self.placed), sel, self.sticker_scale * 100, "ON" if self.face_on else "off",
+                self.effect_idx + 1, len(self.effects)),
         ]
         for i, line in enumerate(lines):
             cv2.putText(canvas, ascii_text(line), (10, h + 22 + 22 * i), cv2.FONT_HERSHEY_SIMPLEX,
@@ -492,6 +577,10 @@ class Editor:
         for i, line in enumerate(desc):
             cv2.putText(canvas, line, (10, h + HUD_BASE_H + 14 + 18 * i), cv2.FONT_HERSHEY_SIMPLEX,
                         0.45, (150, 210, 255), 1, cv2.LINE_AA)
+        self._hits = []
+        ui.draw_interface(self, canvas, h + HUD_H, cw)
+        if self.show_legend:
+            ui.draw_legend(canvas, cw)
         return canvas
 
     # ---------------------------------------------------------------- salvar
@@ -551,7 +640,8 @@ class Editor:
         elif key == ord("f"):
             self.toggle_face()
         elif key == ord("h"):
-            print(HELP)
+            self.show_legend = not self.show_legend
+            self.say("Legenda de atalhos %s." % ("visível" if self.show_legend else "oculta"))
         elif key == ord("0"):
             self.select_sticker(None)
         elif ord("1") <= key <= ord("9"):

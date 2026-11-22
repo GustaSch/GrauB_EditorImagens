@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT))
 
 import editor as editor_mod  # noqa: E402
 import main as main_mod  # noqa: E402
+import ui as ui_mod  # noqa: E402
 from editor import Editor  # noqa: E402
 from filters import CHANNELS, EFFECTS, apply_effect  # noqa: E402
 from imageio_utils import read_image, write_image  # noqa: E402
@@ -328,6 +329,176 @@ class EditorTests(unittest.TestCase):
         self.assertTrue(self.key("a"))
         self.assertFalse(self.key(27))
         self.assertFalse(self.key("q"))
+
+
+class InterfaceTests(unittest.TestCase):
+    """Carrossel, botões, sliders e paleta de stickers (cliques simulados, sem janela)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.ed = Editor(output_dir=Path(self.tmp.name))
+        self.ed.load_photo(SAMPLE)
+        self.canvas = self.ed.render()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def hits(self, kind):
+        return [h for h in self.ed._hits if h[4] == kind]
+
+    def click(self, hit, event=cv2.EVENT_LBUTTONDOWN, dx=0):
+        self.ed.on_mouse(event, (hit[0] + hit[2]) // 2 + dx, (hit[1] + hit[3]) // 2)
+
+    def rerender(self):
+        self.canvas = self.ed.render()
+
+    def test_layout_and_toolbar_fit(self):
+        self.assertEqual(self.canvas.shape[1], max(self.ed.original.shape[1], editor_mod.MIN_CANVAS_W)
+                         + ui_mod.LEGEND_W)
+        self.assertEqual(self.canvas.shape[0], self.ed.original.shape[0] + editor_mod.HUD_H + ui_mod.CHROME_H)
+        cw = self.canvas.shape[1] - ui_mod.LEGEND_W
+        for h in self.ed._hits:
+            self.assertLessEqual(h[2], cw, h)  # nada passa da borda (nem a barra de botões)
+        self.assertEqual(len(self.hits("key")), 11)
+
+    def test_carousel_click_selects_and_double_click_applies(self):
+        target = [h for h in self.hits("effect") if h[5] != self.ed.effect_idx][0]
+        self.click(target)
+        self.assertEqual(self.ed.effect_idx, target[5])
+        self.assertEqual(len(self.ed.steps), 0)
+        self.click(target, cv2.EVENT_LBUTTONDBLCLK)
+        self.assertEqual(len(self.ed.steps), 1)
+        self.assertEqual(self.ed.steps[0].effect, self.ed.effects[target[5]])
+
+    def test_carousel_arrows_and_window_follows_selection(self):
+        self.rerender()
+        self.click(self.hits("page")[1])  # seta ">"
+        self.assertGreater(self.ed.effect_idx, 1)
+        for i in range(len(self.ed.effects)):
+            self.ed.select_index(i)
+            self.rerender()
+            self.assertIn(i, [h[5] for h in self.hits("effect")])
+        self.click(self.hits("page")[1])
+        self.assertEqual(self.ed.effect_idx, len(self.ed.effects) - 1)
+
+    def test_buttons_repeat_shortcuts(self):
+        by_key = {h[5]: h for h in self.hits("key")}
+        self.click(by_key[ord("a")])
+        self.assertEqual(len(self.ed.steps), 1)
+        self.click(by_key[ord("z")])
+        self.assertEqual(len(self.ed.steps), 0)
+        self.click(by_key[ord("m")])
+        self.assertEqual(self.ed.channel, "GRAY")
+        self.click(by_key[ord("c")])
+        self.assertTrue(self.ed.chain)
+        self.click(by_key[ord("r")])
+        self.assertFalse(self.ed.chain)
+        self.assertEqual(self.ed.channel, "RGB")
+        self.click(by_key[ord("s")])
+        self.assertTrue(list(Path(self.tmp.name).glob("foto_*.png")))
+
+    def test_load_buttons_queue_dialogs(self):
+        by_key = {h[5]: h for h in self.hits("key")}
+        with mock.patch.object(Editor, "_pick_file", staticmethod(lambda t: str(SAMPLE))):
+            self.click(by_key[ord("i")])
+            self.assertEqual(self.ed.pending_keys, [ord("i")])  # não abre diálogo dentro do clique
+            self.assertTrue(self.ed.process_queue())
+        self.assertEqual(self.ed.pending_keys, [])
+        self.assertIn("2ª imagem", self.ed.message)
+
+    def test_slider_click_drag_and_release(self):
+        while len(self.ed.effect.params) < 3:  # Bilateral: 3 parâmetros
+            self.ed.select(+1)
+        self.rerender()
+        sl = {h[5]: h for h in self.hits("slider")}
+        self.assertEqual(sorted(sl), [0, 1, 2])
+        x0, x1 = sl[1][6]
+        p = self.ed.effect.params[1]
+        self.ed.on_mouse(cv2.EVENT_LBUTTONDOWN, x0, sl[1][1] + 5)
+        self.assertEqual(self.ed.param_idx, 1)
+        self.assertEqual(self.ed.params[p.name], p.min)
+        self.ed.on_mouse(cv2.EVENT_MOUSEMOVE, x1, sl[1][1] + 5, cv2.EVENT_FLAG_LBUTTON)
+        self.assertEqual(self.ed.params[p.name], p.max)
+        self.ed.on_mouse(cv2.EVENT_MOUSEMOVE, (x0 + x1) // 2, 0, cv2.EVENT_FLAG_LBUTTON)
+        mid = self.ed.params[p.name]
+        self.assertTrue(p.min < mid < p.max)
+        self.assertEqual((mid - p.min) % p.step, 0)  # alinhado ao passo
+        self.ed.on_mouse(cv2.EVENT_LBUTTONUP, x1, 0)
+        self.ed.on_mouse(cv2.EVENT_MOUSEMOVE, x0, 0, cv2.EVENT_FLAG_LBUTTON)  # sem arraste: ignora
+        self.assertEqual(self.ed.params[p.name], mid)
+        self.ed.on_mouse(cv2.EVENT_LBUTTONDOWN, x1 + 5000, sl[0][1] + 5)  # fora da coluna: clique na foto
+        self.assertEqual(self.ed.params[p.name], mid)
+
+    def test_slider_values_respect_param_rules(self):
+        for e in EFFECTS:
+            for p in e.params:
+                for x in (-50, 0, 37, 100, 163, 1000):
+                    v = ui_mod.slider_value(p, x, 0, 100)
+                    self.assertTrue(p.min <= v <= p.max, (e.name, p.name, x, v))
+                    if p.integer and p.step == 2 and p.min % 2 == 1:
+                        self.assertEqual(v % 2, 1, (e.name, p.name, x, v))  # ksize sempre ímpar
+
+    def test_param_label_selects_parameter(self):
+        while len(self.ed.effect.params) < 2:
+            self.ed.select(+1)
+        self.rerender()
+        self.click([h for h in self.hits("param") if h[5] == 1][0])
+        self.assertEqual(self.ed.param_idx, 1)
+
+    def test_sticker_palette(self):
+        icons = self.hits("sticker")
+        self.assertEqual(len(icons), len(self.ed.stickers))
+        self.click(icons[1])
+        self.assertEqual(self.ed.sticker_sel, 1)
+        self.ed.on_mouse(cv2.EVENT_LBUTTONDOWN, 200, 150)
+        self.assertEqual(len(self.ed.placed), 1)
+        before = self.ed.sticker_scale
+        self.click(self.hits("sticker_size")[1])  # "+"
+        self.assertGreater(self.ed.sticker_scale, before)
+        self.click(self.hits("sticker_size")[0])  # "-"
+        self.click(self.hits("sticker_none")[0])
+        self.assertIsNone(self.ed.sticker_sel)
+
+    def test_legend_toggle(self):
+        with_legend = self.ed.render().shape[1]
+        self.ed.handle_key(ord("h"))
+        self.assertFalse(self.ed.show_legend)
+        self.assertEqual(self.ed.render().shape[1], with_legend - ui_mod.LEGEND_W)
+        self.ed.handle_key(ord("h"))
+        self.assertEqual(self.ed.render().shape[1], with_legend)
+
+    def test_thumbnails_every_effect_and_channel(self):
+        self.ed.ensure_second_image()
+        for ch in range(len(CHANNELS)):
+            self.ed.channel_idx = ch
+            for e in self.ed.effects:
+                th = ui_mod.thumbnail(self.ed, e)
+                self.assertEqual(th.shape, (ui_mod.THUMB_H, ui_mod.THUMB_W, 3), (e.name, ch))
+        t1 = ui_mod.thumbnail(self.ed, self.ed.effect)
+        self.assertIs(ui_mod.thumbnail(self.ed, self.ed.effect), t1)  # cache
+
+    def test_thumbnail_follows_params_and_image(self):
+        e = [x for x in self.ed.effects if x.key == "pixelate"][0] if any(
+            x.key == "pixelate" for x in self.ed.effects) else self.ed.effects[0]
+        a = ui_mod.thumbnail(self.ed, e).copy()
+        p = e.params[0]
+        self.ed.param_values[e.key][p.name] = p.max
+        b = ui_mod.thumbnail(self.ed, e)
+        self.assertFalse(np.array_equal(a, b))
+        self.ed.load_photo(SAMPLE)
+        self.assertEqual(ui_mod.thumbnail(self.ed, e).shape, a.shape)
+
+    def test_render_without_image_and_in_video(self):
+        ed = Editor(output_dir=Path(self.tmp.name))
+        c = ed.render()  # sem imagem: miniaturas usam a imagem de exemplo
+        self.assertEqual(c.shape[1], editor_mod.MIN_CANVAS_W + ui_mod.LEGEND_W)
+        with mock.patch.object(cv2, "VideoCapture", FakeCap):
+            ed.toggle_webcam()
+            c = ed.render()
+            self.assertIsNotNone(ed._thumb_snapshot)
+            self.assertEqual(ui_mod.thumbnail(ed, ed.effect).shape[:2], (ui_mod.THUMB_H, ui_mod.THUMB_W))
+            ed.stop_webcam()
+            self.assertIsNone(ed._thumb_snapshot)
 
 
 class FakeCap:
