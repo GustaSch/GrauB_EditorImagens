@@ -1,0 +1,18 @@
+name: tests
+
+on: [push, pull_request]
+
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      # headless: o CI não tem janela; os testes simulam HighGUI e a webcam.
+      - run: pip install numpy "opencv-python-headless>=4.8,<5"
+      - run: python -m unittest discover -s tests -v
