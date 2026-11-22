@@ -26,7 +26,7 @@ OUTPUT = ROOT / "output"
 PHOTO_MAX = (1000, 560)   # tamanho máximo de trabalho no modo foto
 VIDEO_MAX = (640, 480)    # tamanho máximo de trabalho no modo vídeo
 WINDOW = "Editor de Imagens e Video - Grau B"
-MIN_CANVAS_W = 860         # largura mínima: cabe toda a barra de botões
+MIN_CANVAS_W = 860         # largura mínima da janela (a barra de botões pode alargá-la)
 HUD_BASE_H = 56          # linhas de estado (modo/canal/encadeamento, stickers/rosto)
 HUD_DESC_LINES = 3       # linhas reservadas para a descrição do efeito selecionado
 HUD_DESC_WIDTH = 88      # caracteres por linha da descrição
@@ -554,7 +554,7 @@ class Editor:
         barra de botões, carrossel, sliders, stickers, mensagem e, à direita, a legenda."""
         img = self.compose()
         h, w = img.shape[:2]
-        cw = max(w, MIN_CANVAS_W)
+        cw = max(w, MIN_CANVAS_W, ui.toolbar_width(self))
         total_w = cw + (ui.LEGEND_W if self.show_legend else 0)
         canvas = np.full((h + HUD_H + ui.CHROME_H, total_w, 3), 28, np.uint8)
         canvas[:h, :w] = img

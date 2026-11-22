@@ -353,7 +353,8 @@ class InterfaceTests(unittest.TestCase):
         self.canvas = self.ed.render()
 
     def test_layout_and_toolbar_fit(self):
-        self.assertEqual(self.canvas.shape[1], max(self.ed.original.shape[1], editor_mod.MIN_CANVAS_W)
+        self.assertEqual(self.canvas.shape[1], max(self.ed.original.shape[1], editor_mod.MIN_CANVAS_W,
+                                                   ui_mod.toolbar_width(self.ed))
                          + ui_mod.LEGEND_W)
         self.assertEqual(self.canvas.shape[0], self.ed.original.shape[0] + editor_mod.HUD_H + ui_mod.CHROME_H)
         cw = self.canvas.shape[1] - ui_mod.LEGEND_W
@@ -396,6 +397,16 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual(self.ed.channel, "RGB")
         self.click(by_key[ord("s")])
         self.assertTrue(list(Path(self.tmp.name).glob("foto_*.png")))
+
+    def test_toolbar_fits_with_wide_text(self):
+        # o OpenCV 4.x desenha texto mais largo que o 5.x: simula fontes 25% maiores
+        real = ui_mod.text_w
+        with mock.patch.object(ui_mod, "text_w", lambda label, scale=0.45: int(real(label, scale) * 1.25)):
+            for ch in range(len(CHANNELS)):
+                self.ed.channel_idx = ch
+                canvas = self.ed.render()
+                cw = canvas.shape[1] - ui_mod.LEGEND_W
+                self.assertTrue(all(h[2] <= cw for h in self.ed._hits))
 
     def test_load_buttons_queue_dialogs(self):
         by_key = {h[5]: h for h in self.hits("key")}
@@ -491,7 +502,7 @@ class InterfaceTests(unittest.TestCase):
     def test_render_without_image_and_in_video(self):
         ed = Editor(output_dir=Path(self.tmp.name))
         c = ed.render()  # sem imagem: miniaturas usam a imagem de exemplo
-        self.assertEqual(c.shape[1], editor_mod.MIN_CANVAS_W + ui_mod.LEGEND_W)
+        self.assertEqual(c.shape[1], max(editor_mod.MIN_CANVAS_W, ui_mod.toolbar_width(ed)) + ui_mod.LEGEND_W)
         with mock.patch.object(cv2, "VideoCapture", FakeCap):
             ed.toggle_webcam()
             c = ed.render()

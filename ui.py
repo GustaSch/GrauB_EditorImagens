@@ -58,7 +58,7 @@ LEGEND = [
     ("z", "desfazer"),
     ("r", "resetar tudo"),
     ("s", "salvar em output/"),
-    ("1-9", "escolher sticker (0 = nenhum)"),
+    ("1-9", "sticker (0 = nenhum)"),
     (", / .", "tamanho do sticker"),
     ("f", "filtro de gato (rosto)"),
     ("h", "mostrar/ocultar atalhos"),
@@ -174,9 +174,12 @@ def sticker_icon(ed, idx: int, size: int = 38) -> np.ndarray:
 
 
 # ------------------------------------------------------------------ blocos
-def draw_toolbar(ed, canvas, y: int, cw: int) -> None:
-    _rect(canvas, 0, y, cw, y + TOOLBAR_H, PANEL)
-    buttons = [
+TOOLBAR_GAP = 4
+TOOLBAR_PAD = 16
+
+
+def toolbar_buttons(ed) -> List[Tuple[str, int, bool]]:
+    return [
         ("Carregar", ord("l"), False),
         ("2a imagem", ord("i"), False),
         ("Webcam", ord("v"), ed.mode == "video"),
@@ -189,13 +192,26 @@ def draw_toolbar(ed, canvas, y: int, cw: int) -> None:
         ("Gato (rosto)", ord("f"), ed.face_on),
         ("Atalhos", ord("h"), ed.show_legend),
     ]
+
+
+def toolbar_width(ed) -> int:
+    """Largura necessária para a barra de botões. A largura do texto do OpenCV varia entre
+    versões/sistemas, então é medida em vez de fixada; usa o rótulo mais largo do canal
+    ("Canal: GRAY") para a janela não mudar de tamanho ao trocar de canal."""
+    labels = [b[0] for b in toolbar_buttons(ed)] + ["Canal: GRAY"]
+    labels.remove("Canal: " + ed.channel)
+    return 6 + sum(text_w(l) + TOOLBAR_PAD + TOOLBAR_GAP for l in labels) + 2
+
+
+def draw_toolbar(ed, canvas, y: int, cw: int) -> None:
+    _rect(canvas, 0, y, cw, y + TOOLBAR_H, PANEL)
     x = 6
-    for label, key, active in buttons:
-        w = text_w(label) + 16
+    for label, key, active in toolbar_buttons(ed):
+        w = text_w(label) + TOOLBAR_PAD
         _rect(canvas, x, y + 5, x + w, y + TOOLBAR_H - 5, BTN_ON if active else BTN)
-        put(canvas, label, x + 8, y + 22, TEXT)
+        put(canvas, label, x + TOOLBAR_PAD // 2, y + 22, TEXT)
         ed._hits.append((x, y + 5, x + w, y + TOOLBAR_H - 5, "key", key, None))
-        x += w + 4
+        x += w + TOOLBAR_GAP
 
 
 def draw_carousel(ed, canvas, y: int, cw: int) -> None:
