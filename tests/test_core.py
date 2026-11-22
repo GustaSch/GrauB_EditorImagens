@@ -285,6 +285,45 @@ class EditorTests(unittest.TestCase):
         Editor.draw_cat_face(base, (-20, -20, 100, 100), self.ed._face_assets)  # recorte nas bordas
         self.ed.compose()
 
+    def test_cascade_loads_bundled_xml(self):
+        # O XML versionado em assets/ garante o filtro de rosto mesmo no OpenCV 5.x,
+        # cujo pacote não traz os classificadores Haar.
+        self.assertTrue((editor_mod.ASSETS / editor_mod.CASCADE_FILE).exists())
+        self.assertTrue(self.ed._get_cascade())
+
+    def test_cascade_from_accented_path(self):
+        folder = Path(self.tmp.name) / "pasta com acentuação"
+        folder.mkdir()
+        dst = folder / editor_mod.CASCADE_FILE
+        dst.write_bytes((editor_mod.ASSETS / editor_mod.CASCADE_FILE).read_bytes())
+        self.assertIsNotNone(Editor._read_cascade(dst))
+        self.assertIsNone(Editor._read_cascade(folder / "nao_existe.xml"))
+
+    def test_reset_restores_chain_and_sticker_scale(self):
+        self.key("c")
+        self.key(".")
+        self.assertTrue(self.ed.chain)
+        self.key("r")
+        self.assertFalse(self.ed.chain)
+        self.assertEqual(self.ed.sticker_scale, editor_mod.STICKER_SCALE_DEFAULT)
+
+    def test_undo_without_history_says_so(self):
+        self.ed.history.clear()
+        self.ed.undo()
+        self.assertIn("Nada para desfazer", self.ed.message)
+
+    def test_hud_shows_effect_description(self):
+        canvas = self.ed.render()
+        h = self.ed.original.shape[0]
+        area = canvas[h + editor_mod.HUD_BASE_H: h + editor_mod.HUD_H, :]
+        self.assertGreater(int((area != 28).any(axis=2).sum()), 50)
+
+    def test_descriptions_fit_in_hud(self):
+        import textwrap
+        for e in self.ed.effects:
+            lines = textwrap.wrap(editor_mod.ascii_text(e.description), editor_mod.HUD_DESC_WIDTH)
+            self.assertLessEqual(len(lines), editor_mod.HUD_DESC_LINES, e.name)
+
     def test_quit_keys(self):
         self.assertTrue(self.key("a"))
         self.assertFalse(self.key(27))
@@ -376,6 +415,7 @@ class VideoAndLoopTests(unittest.TestCase):
                 mock.patch.object(cv2, "getWindowProperty", lambda *a: 1.0), \
                 mock.patch.object(cv2, "destroyAllWindows"), \
                 mock.patch.object(cv2, "VideoCapture", FakeCap), \
+                mock.patch.object(Editor, "_pick_file", staticmethod(lambda t: "")), \
                 mock.patch.object(Editor, "_ask", staticmethod(lambda p: next(answers))), \
                 mock.patch.object(editor_mod, "OUTPUT", Path(self.tmp.name)):
             rc = main_mod.run(main_mod.parse_args(["--image", str(SAMPLE)]))

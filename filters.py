@@ -251,7 +251,8 @@ EFFECTS: List[Effect] = [
            median_blur, [_p("ksize", "tamanho do kernel (ímpar)", 5, 3, 31, 2, True)]),
     Effect("bilateral", "Bilateral", "filter", "suavizacao",
            "Suavização que preserva bordas: pondera vizinhos por distância espacial e por "
-           "similaridade de cor. Parâmetros: diameter, sigma_color, sigma_space.",
+           "similaridade de cor. Parâmetros: diameter, sigma_color, sigma_space. "
+           "É o filtro mais pesado: na webcam pode reduzir os quadros por segundo.",
            bilateral, [_p("diameter", "diâmetro da vizinhança", 9, 3, 15, 2, True),
                        _p("sigma_color", "sigma de cor", 75, 10, 200, 5),
                        _p("sigma_space", "sigma espacial", 75, 10, 200, 5)]),

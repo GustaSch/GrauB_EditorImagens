@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import textwrap
 import time
 import unicodedata
 from dataclasses import dataclass
@@ -25,7 +26,12 @@ PHOTO_MAX = (1000, 700)   # tamanho máximo de trabalho no modo foto
 VIDEO_MAX = (640, 480)    # tamanho máximo de trabalho no modo vídeo
 WINDOW = "Editor de Imagens e Video - Grau B"
 MIN_CANVAS_W = 780
-HUD_H = 78
+HUD_BASE_H = 78          # linhas de estado (modo, canal, parâmetros, stickers)
+HUD_DESC_LINES = 3       # linhas reservadas para a descrição do efeito selecionado
+HUD_DESC_WIDTH = 88      # caracteres por linha da descrição
+HUD_H = HUD_BASE_H + 18 * HUD_DESC_LINES
+STICKER_SCALE_DEFAULT = 0.18
+CASCADE_FILE = "haarcascade_frontalface_default.xml"
 
 HELP = """
 =========================== COMANDOS ===========================
@@ -83,7 +89,7 @@ class Editor:
 
         self.stickers: List[Sticker] = self._load_stickers(sticker_dir or ASSETS / "stickers")
         self.sticker_sel: Optional[int] = None
-        self.sticker_scale = 0.18
+        self.sticker_scale = STICKER_SCALE_DEFAULT
 
         self.face_on = False
         self._cascade = None
@@ -249,19 +255,24 @@ class Editor:
             self.say("Nada para desfazer.")
             return
         what = self.history.pop()
+        undone = False
         if what == "step" and self.steps:
             self.steps.pop()
             self._dirty = True
+            undone = True
         elif what == "sticker" and self.placed:
             self.placed.pop()
-        self.say("Última ação desfeita.")
+            undone = True
+        self.say("Última ação desfeita." if undone else "Nada para desfazer.")
 
     def reset(self) -> None:
         self.steps.clear()
         self.placed.clear()
         self.history.clear()
         self.face_on = False
+        self.chain = False
         self.sticker_sel = None
+        self.sticker_scale = STICKER_SCALE_DEFAULT
         self.channel_idx = 0
         self.param_values = {e.key: e.default_params() for e in EFFECTS}
         self._dirty = True
@@ -341,11 +352,39 @@ class Editor:
         self.say("Sticker '%s' posicionado em (%d, %d)." % (self.stickers[self.sticker_sel].name, x, y))
 
     # ----------------------------------------------------- detecção de face
+    @staticmethod
+    def _read_cascade(path: Path):
+        """Carrega um classificador Haar; devolve None se não for possível.
+        Se o caminho tiver acentos (problema do OpenCV no Windows), lê o XML da memória."""
+        if not path.exists():
+            return None
+        cascade = cv2.CascadeClassifier(str(path))
+        if not cascade.empty():
+            return cascade
+        try:
+            fs = cv2.FileStorage(path.read_text(encoding="utf-8", errors="ignore"),
+                                 cv2.FILE_STORAGE_READ | cv2.FILE_STORAGE_MEMORY)
+            cascade = cv2.CascadeClassifier()
+            if cascade.read(fs.getFirstTopLevelNode()) and not cascade.empty():
+                return cascade
+        except cv2.error:
+            pass
+        return None
+
     def _get_cascade(self):
+        """Haar de rosto frontal. Usa o XML versionado em assets/ (o pacote
+        opencv-python 5.x deixou de trazê-lo) e, se faltar, o do próprio OpenCV."""
         if self._cascade is None:
-            path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-            cascade = cv2.CascadeClassifier(path)
-            self._cascade = cascade if not cascade.empty() else False
+            candidates = [ASSETS / CASCADE_FILE]
+            data = getattr(cv2, "data", None)
+            if data is not None:
+                candidates.append(Path(data.haarcascades) / CASCADE_FILE)
+            self._cascade = False
+            for path in candidates:
+                cascade = self._read_cascade(path)
+                if cascade is not None:
+                    self._cascade = cascade
+                    break
         return self._cascade
 
     def _load_face_assets(self) -> Optional[Dict[str, np.ndarray]]:
@@ -446,6 +485,13 @@ class Editor:
         for i, line in enumerate(lines):
             cv2.putText(canvas, ascii_text(line), (10, h + 22 + 22 * i), cv2.FONT_HERSHEY_SIMPLEX,
                         0.5, (235, 235, 235), 1, cv2.LINE_AA)
+        desc = textwrap.wrap(ascii_text(e.description), HUD_DESC_WIDTH)
+        if len(desc) > HUD_DESC_LINES:
+            desc = desc[:HUD_DESC_LINES]
+            desc[-1] = desc[-1][:HUD_DESC_WIDTH - 3] + "..."
+        for i, line in enumerate(desc):
+            cv2.putText(canvas, line, (10, h + HUD_BASE_H + 14 + 18 * i), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.45, (150, 210, 255), 1, cv2.LINE_AA)
         return canvas
 
     # ---------------------------------------------------------------- salvar
@@ -498,9 +544,10 @@ class Editor:
         elif key == ord("v"):
             self.toggle_webcam()
         elif key == ord("l"):
-            self.load_photo(self._ask("Caminho da foto (Enter cancela): "))
+            self.load_photo(self._ask_path("Caminho da foto (Enter cancela): ", "Escolher foto"))
         elif key == ord("i"):
-            self.load_second_image(self._ask("Caminho da 2ª imagem (Enter cancela): "))
+            self.load_second_image(self._ask_path("Caminho da 2ª imagem (Enter cancela): ",
+                                                  "Escolher a 2ª imagem"))
         elif key == ord("f"):
             self.toggle_face()
         elif key == ord("h"):
@@ -516,6 +563,32 @@ class Editor:
             self.sticker_scale = min(0.8, round(self.sticker_scale + 0.02, 2))
             self.say("Tamanho do sticker: %.0f%% da largura" % (self.sticker_scale * 100))
         return True
+
+    @staticmethod
+    def _pick_file(title: str) -> str:
+        """Abre o seletor de arquivos do sistema (Tkinter, só no Windows: no macOS/Linux o
+        Tk pode conflitar com a janela do OpenCV, então lá se usa o console).
+        Devolve '' se indisponível ou cancelado."""
+        if not sys.platform.startswith("win"):
+            return ""
+        try:
+            import tkinter
+            from tkinter import filedialog
+            root = tkinter.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            try:
+                return filedialog.askopenfilename(
+                    title=title,
+                    filetypes=[("Imagens", "*.png *.jpg *.jpeg *.bmp *.webp *.tif *.tiff"),
+                               ("Todos os arquivos", "*.*")]) or ""
+            finally:
+                root.destroy()
+        except Exception:  # Tk ausente, sem display etc.
+            return ""
+
+    def _ask_path(self, prompt: str, title: str) -> str:
+        return self._pick_file(title) or self._ask(prompt)
 
     @staticmethod
     def _ask(prompt: str) -> str:
