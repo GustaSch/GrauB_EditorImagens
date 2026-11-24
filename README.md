@@ -8,15 +8,15 @@ e *stickers*. A interação é feita por **HighGUI (janela do OpenCV) + teclado 
 ![Editor com carrossel de filtros, sliders, paleta de stickers e legenda de atalhos](docs/screenshot.jpg)
 
 > **Autores:**
-> Arthur Rambor
-> Gustavo Ribeiro Schwert
+> Arthur Rambor, 
+> Gustavo Ribeiro Schwert, 
 > João Pedro Salles
 
 ## Requisitos
 
-* Python 3.9 ou mais novo (no Windows, marque *Add Python to PATH* ao instalar)
+* Python 3.9+
 * Pacotes: `numpy` e `opencv-python` **4.x** (arquivo `requirements.txt`)
-* Webcam (somente para o Modo Vídeo) e sistema com interface gráfica
+* Webcam (somente para o Modo Vídeo)
 
 > O `requirements.txt` limita o OpenCV a `<5` de propósito: o pacote `opencv-python` 5.x deixou de
 > incluir os classificadores Haar usados no filtro de rosto. Mesmo assim, o projeto traz uma cópia
@@ -195,11 +195,10 @@ e recorte, animação do spritesheet, carregamento do classificador de rosto (in
 com acentos), pipeline (aplicar, encadear, desfazer, resetar), painel com a descrição do efeito, interface
 (cliques em botões, carrossel, sliders arrastáveis, paleta de stickers e miniaturas),
 salvamento com caminho acentuado, tratamento de erros (arquivo inexistente, webcam indisponível) e
-o laço principal com janela e webcam simuladas. Os mesmos testes rodam no GitHub Actions.
+o laço principal com janela e webcam simuladas.
 
 ## Créditos
 
-* Stickers e imagens de exemplo: gerados por `generate_assets.py` (autoria do grupo).
 * `assets/haarcascade_frontalface_default.xml`: classificador Haar de rosto frontal da
   [OpenCV](https://github.com/opencv/opencv/tree/4.x/data/haarcascades) (Rainer Lienhart; *Intel
-  License Agreement*, cujo aviso permanece no próprio arquivo).
+  License Agreement*).
