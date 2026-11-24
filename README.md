@@ -1,4 +1,4 @@
-# Editor de Imagens e Vídeo (estilo *stories*)
+# Editor de Imagens e Vídeo
 
 Trabalho do **Grau B** — *Processamento Gráfico: Fundamentos* (UNISINOS).
 Protótipo de aplicativo de edição de imagens e vídeo em **Python + OpenCV**, com foco em
@@ -10,7 +10,7 @@ e *stickers*. A interação é feita por **HighGUI (janela do OpenCV) + teclado 
 > **Autores:**
 > Arthur Rambor
 > Gustavo Ribeiro Schwert
-> <!-- adicione aqui os demais integrantes do grupo -->
+> João Pedro Salles
 
 ## Requisitos
 
